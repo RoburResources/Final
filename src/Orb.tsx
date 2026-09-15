@@ -72,11 +72,22 @@ export default function Orb({ state, level, pulse, size = 264 }: Props) {
       const R = base * (1 + energy * 0.3);
       const breathe = reduced ? 0 : Math.sin(t / 1600) * 0.012;
 
+      // The halo carries the state's own colour. A fixed warm glow behind the
+      // grey idle orb reads as a brown smudge rather than a light source.
+      // Each state's halo takes that state's own mid tone, so the glow reads as
+      // light coming off the orb rather than a separate colour behind it.
+      const tint =
+        s.state === 'idle' || s.state === 'locked'
+          ? '138,143,158'
+          : s.state === 'thinking'
+            ? '199,123,192'
+            : '255,107,90';
+
       // Inscribed in the canvas so the glow never clips into a square.
       const GR = Math.min(w, h) * 0.5;
       const glow = cx.createRadialGradient(px, py, Math.min(R * 0.55, GR * 0.8), px, py, GR);
-      glow.addColorStop(0, `rgba(255,107,90,${(0.2 + energy * 0.3).toFixed(3)})`);
-      glow.addColorStop(1, 'rgba(255,107,90,0)');
+      glow.addColorStop(0, `rgba(${tint},${(0.2 + energy * 0.3).toFixed(3)})`);
+      glow.addColorStop(1, `rgba(${tint},0)`);
       cx.fillStyle = glow;
       cx.beginPath();
       cx.arc(px, py, GR, 0, Math.PI * 2);

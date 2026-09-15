@@ -12,7 +12,8 @@
     "build": "vite build",
     "start": "node server.js",
     "serve": "npm run build && node server.js",
-    "test": "node test/webauthn.e2e.mjs && node test/chat.e2e.mjs"
+    "test": "node test/webauthn.e2e.mjs && node test/chat.e2e.mjs",
+    "test:browser": "node test/browser.faceid.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.72.0",

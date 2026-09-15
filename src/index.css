@@ -71,6 +71,11 @@
 
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body,#root{height:100%}
+
+/* Controls do not inherit type or lose their chrome on their own, and there is
+   no framework reset underneath this file to do it for them. */
+button,input,select,textarea{font:inherit;letter-spacing:inherit;color:inherit}
+button{border:0;background:none;padding:0;cursor:pointer}
 body{
   margin:0;background:var(--bg);color:var(--label);
   font-family:var(--sans);font-size:17px;line-height:1.45;
@@ -153,6 +158,11 @@ body{
   background:transparent;color:var(--blue);font-weight:400;margin-top:8px;padding:12px;
 }
 .btn--destructive{background:transparent;color:var(--red);font-weight:400}
+
+/* A whole row that is itself a button, as iOS Settings does for a destructive
+   action: full bleed, text left, nothing to give away that it is a control. */
+button.row{width:100%;text-align:left;font-size:17px;letter-spacing:-.015em}
+button.row:active{background:var(--fill)}
 
 .fineprint{
   margin:22px 0 0;font-size:12px;color:var(--label-2);line-height:1.5;max-width:23rem;

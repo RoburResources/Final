@@ -83,6 +83,17 @@ All of the above is covered by `test/webauthn.e2e.mjs`, which drives the real
 server with a synthetic authenticator built on WebCrypto — a genuine ceremony,
 DER signatures and all — and then tries to break in eleven ways.
 
+`test/browser.faceid.mjs` goes one further and runs the actual UI in Chromium
+against a virtual platform authenticator, so the lock screen, the setup code,
+`navigator.credentials`, both ceremonies and the unlocked console are exercised
+the way the phone will exercise them. It needs Playwright, so it is not part of
+`npm test`:
+
+```sh
+npm install --no-save playwright && npx playwright install chromium
+npm run test:browser
+```
+
 ### Who may claim it
 
 The first passkey **claims** the app and pins its origin; after that,
