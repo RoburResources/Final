@@ -1,5 +1,15 @@
 import { useEffect, useRef } from 'react';
 
+export type OrbState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'locked';
+
+type Props = {
+  state: OrbState;
+  /** 0..1 live microphone level. */
+  level: number;
+  /** Bumped on each spoken word so the orb pulses with the voice. */
+  pulse: number;
+  size?: number;
+};
 
 const LOBES = [
   { k: 3, a: 0.055, s: 0.00055, p: 0 },
@@ -8,8 +18,8 @@ const LOBES = [
   { k: 2, a: 0.03, s: -0.00031, p: 5.2 },
 ];
 
-export default function Orb({ state, level, pulse, size = 264 }) {
-  const ref = useRef(null);
+export default function Orb({ state, level, pulse, size = 264 }: Props) {
+  const ref = useRef<HTMLCanvasElement | null>(null);
   const live = useRef({ state, level, pulse: 0, lastPulse: 0 });
 
   live.current.state = state;
@@ -37,7 +47,7 @@ export default function Orb({ state, level, pulse, size = 264 }) {
     resize();
     window.addEventListener('resize', resize);
 
-    const draw = (t) => {
+    const draw = (t: number) => {
       raf = requestAnimationFrame(draw);
       const s = live.current;
       s.pulse *= 0.9;

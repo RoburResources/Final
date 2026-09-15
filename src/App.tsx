@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Keyboard, Mic, MicOff, ScrollText, Settings, Square, X } from 'lucide-react';
-import { base44 } from '@/api/base44Client';
-import Orb from '@/components/Orb';
-import FaceGlyph from '@/components/FaceGlyph';
-import { checkSupport, enrol, readableError, state as faceState, unlock } from '@/lib/passkey';
+import Orb, { type OrbState } from './Orb';
+import FaceGlyph from './FaceGlyph';
+import { checkSupport, enrol, post, readableError, signIn } from './passkey';
 import {
   Ears,
   Mouth,
@@ -12,69 +11,74 @@ import {
   recognitionSupported,
   speechSupported,
   takeSentences,
-} from '@/lib/voice';
+} from './voice';
+
+type Turn = { role: 'user' | 'assistant'; text: string; at: string };
+type Phase = 'boot' | 'locked' | 'ready';
 
 export default function App() {
-  const [phase, setPhase] = useState('boot'); // boot | signin | locked | ready
-  const [enrolled, setEnrolled] = useState(false);
-  const [email, setEmail] = useState('');
+  const [phase, setPhase] = useState<Phase>('boot');
+  const [claimed, setClaimed] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState('');
-  const [support, setSupport] = useState({ ok: true });
-  const [scan, setScan] = useState('idle');
+  const [support, setSupport] = useState<{ ok: boolean; reason?: string }>({ ok: true });
+  const [scan, setScan] = useState<'idle' | 'scanning' | 'ok' | 'fail'>('idle');
+  const [needsCode, setNeedsCode] = useState(false);
+  const [code, setCode] = useState('');
 
-  const [orbState, setOrbState] = useState('locked');
+  const [state, setState] = useState<OrbState>('locked');
   const [level, setLevel] = useState(0);
   const [pulse, setPulse] = useState(0);
   const [caption, setCaption] = useState('');
-  const [captionKind, setCaptionKind] = useState('hint');
-  const [turns, setTurns] = useState([]);
+  const [captionKind, setCaptionKind] = useState<'hint' | 'speech' | 'interim'>('hint');
+  const [turns, setTurns] = useState<Turn[]>([]);
   const [micOpen, setMicOpen] = useState(false);
   const [muted, setMuted] = useState(false);
   const [typing, setTyping] = useState(false);
   const [draft, setDraft] = useState('');
-  const [sheet, setSheet] = useState('none');
+  const [sheet, setSheet] = useState<'none' | 'script' | 'settings'>('none');
   const [unread, setUnread] = useState(0);
   const [micNote, setMicNote] = useState('');
-  const [voices, setVoices] = useState([]);
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [voiceIdx, setVoiceIdx] = useState(0);
   const [lang, setLang] = useState('en-AU');
 
-  const ears = useRef(null);
-  const mouth = useRef(null);
-  const turnsRef = useRef([]);
-  const sheetRef = useRef('none');
+  const ears = useRef<Ears | null>(null);
+  const mouth = useRef<Mouth | null>(null);
+  const turnsRef = useRef<Turn[]>([]);
   const busy = useRef(false);
+  const sheetRef = useRef<'none' | 'script' | 'settings'>('none');
 
   turnsRef.current = turns;
   sheetRef.current = sheet;
 
-  const hint = useCallback((t) => {
+  const hint = useCallback((t: string) => {
     setCaption(t);
     setCaptionKind('hint');
   }, []);
 
-  /* ------------------------------ boot ------------------------------ */
+  /* ------------------------------ auth ------------------------------ */
 
   useEffect(() => {
     let alive = true;
     (async () => {
       const s = await checkSupport();
-      if (alive) setSupport(s);
+      if (!alive) return;
+      setSupport(s);
       try {
-        const me = await base44.auth.me();
+        const res = await fetch('/api/state', { credentials: 'same-origin' });
+        const data = await res.json();
         if (!alive) return;
-        if (!me) {
-          setPhase('signin');
-          return;
+        setClaimed(Boolean(data.claimed));
+        setNeedsCode(Boolean(data.needsCode));
+        if (data.signedIn) {
+          setPhase('ready');
+          setState('idle');
+        } else {
+          setPhase('locked');
         }
-        setEmail(me.email || '');
-        const st = await faceState();
-        if (!alive) return;
-        setEnrolled(Boolean(st.enrolled));
-        setPhase('locked');
       } catch {
-        if (alive) setPhase('signin');
+        if (alive) setPhase('locked');
       }
     })();
     return () => {
@@ -82,26 +86,41 @@ export default function App() {
     };
   }, []);
 
-  const signIn = () => {
-    setAuthBusy(true);
-    // loginWithProvider redirects the browser; it does not resolve.
-    base44.auth.loginWithProvider('google', window.location.href);
-  };
+  const afterAuth = useCallback(() => {
+    setClaimed(true);
+    setPhase('ready');
+    setState('idle');
+  }, []);
 
-  const runFaceId = async () => {
+  const doEnrol = async () => {
     setAuthBusy(true);
     setAuthError('');
     setScan('scanning');
     try {
-      if (enrolled) await unlock();
-      else await enrol(navigator.platform || 'This device');
+      await enrol(navigator.platform || 'This device', code.trim());
       setScan('ok');
-      setEnrolled(true);
-      setPhase('ready');
-      setOrbState('idle');
+      afterAuth();
     } catch (err) {
       setScan('fail');
-      setAuthError(readableError(err));
+      const res = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      setAuthError(res || readableError(err));
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const doSignIn = async () => {
+    setAuthBusy(true);
+    setAuthError('');
+    setScan('scanning');
+    try {
+      await signIn();
+      setScan('ok');
+      afterAuth();
+    } catch (err) {
+      setScan('fail');
+      const res = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      setAuthError(res || readableError(err));
     } finally {
       setAuthBusy(false);
     }
@@ -110,10 +129,10 @@ export default function App() {
   const lock = () => {
     ears.current?.close();
     mouth.current?.stop();
+    void fetch('/api/lock', { method: 'POST', credentials: 'same-origin' });
     setMicOpen(false);
     setPhase('locked');
-    setScan('idle');
-    setOrbState('locked');
+    setState('locked');
     setSheet('none');
   };
 
@@ -121,13 +140,13 @@ export default function App() {
 
   useEffect(() => {
     if (phase !== 'ready') return;
-    base44.functions
-      .invoke('voiceChat', { action: 'history' })
-      .then((res) => setTurns(Array.isArray(res.data?.turns) ? res.data.turns : []))
+    fetch('/api/transcript', { credentials: 'same-origin' })
+      .then((r) => r.json())
+      .then((d) => setTurns(Array.isArray(d.turns) ? d.turns : []))
       .catch(() => {});
   }, [phase]);
 
-  const push = useCallback((turn) => {
+  const push = useCallback((turn: Turn) => {
     setTurns((prev) => [...prev, turn]);
     if (sheetRef.current !== 'script') setUnread((u) => u + 1);
   }, []);
@@ -164,7 +183,7 @@ export default function App() {
       return;
     }
     let raf = 0;
-    let ctx = null;
+    let ctx: AudioContext | null = null;
     let cancelled = false;
 
     navigator.mediaDevices
@@ -174,7 +193,7 @@ export default function App() {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
-        const AC = window.AudioContext || window.webkitAudioContext;
+        const AC = window.AudioContext || (window as any).webkitAudioContext;
         if (!AC) return;
         ctx = new AC();
         const an = ctx.createAnalyser();
@@ -192,12 +211,12 @@ export default function App() {
         };
         tick();
       })
-      .catch((err) => {
+      .catch((err: DOMException) => {
         setMicNote(
           err?.name === 'NotFoundError'
             ? 'No microphone was found on this device.'
             : err?.name === 'NotAllowedError'
-              ? 'The browser blocked the microphone. Allow it in site settings beside the address bar, then reload.'
+              ? 'The browser blocked the microphone. Allow it in the site settings beside the address bar, then reload.'
               : `The microphone could not be opened (${err?.name || 'unknown'}).`,
         );
       });
@@ -212,43 +231,88 @@ export default function App() {
   /* ------------------------------ engine ---------------------------- */
 
   const ask = useCallback(
-    async (text) => {
+    async (text: string) => {
       if (busy.current) return;
       busy.current = true;
 
       push({ role: 'user', text, at: new Date().toISOString() });
       mouth.current?.stop();
       ears.current?.holdForSpeech(true);
-      setOrbState('thinking');
+      setState('thinking');
       setCaption('');
 
-      try {
-        const res = await base44.functions.invoke('voiceChat', {
-          text,
-          history: turnsRef.current.slice(-20).map((t) => ({ role: t.role, text: t.text })),
-        });
-        const reply = String(res.data?.reply || '').trim();
-        push({ role: 'assistant', text: reply, at: new Date().toISOString() });
-        setCaption(reply);
-        setCaptionKind('speech');
+      const line = { text: '' };
+      let spoken = 0;
+      const speakReady = () => {
+        const { spoken: chunk } = takeSentences(line.text.slice(spoken));
+        if (chunk) {
+          mouth.current?.say(chunk);
+          spoken += chunk.length;
+        }
+      };
 
-        if (speechSupported && mouth.current) {
-          const { spoken, rest } = takeSentences(reply);
-          if (spoken) mouth.current.say(spoken);
-          if (rest.trim()) mouth.current.say(rest);
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            text,
+            history: turnsRef.current.slice(-20).map((t) => ({ role: t.role, text: t.text })),
+          }),
+        });
+        if (res.status === 401) {
+          lock();
+          return;
+        }
+        if (!res.body) throw new Error('No response body');
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let failed = '';
+
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const frames = buffer.split('\n\n');
+          buffer = frames.pop() ?? '';
+          for (const frame of frames) {
+            const payload = frame.replace(/^data: /, '').trim();
+            if (!payload) continue;
+            let msg: { delta?: string; done?: boolean; error?: string };
+            try {
+              msg = JSON.parse(payload);
+            } catch {
+              continue;
+            }
+            if (msg.error) failed = msg.error;
+            if (msg.delta) {
+              line.text += msg.delta;
+              setCaption(line.text);
+              setCaptionKind('speech');
+              if (speechSupported) speakReady();
+            }
+          }
+        }
+
+        if (failed) {
+          hint(failed);
         } else {
+          const tail = line.text.slice(spoken).trim();
+          if (tail && speechSupported) mouth.current?.say(tail);
+          push({ role: 'assistant', text: line.text.trim(), at: new Date().toISOString() });
+        }
+
+        if (!speechSupported || failed) {
           ears.current?.holdForSpeech(false);
-          setOrbState(ears.current?.isOpen ? 'listening' : 'idle');
+          setState(ears.current?.isOpen ? 'listening' : 'idle');
         }
       } catch (err) {
-        const status = err?.response?.status;
-        if (status === 401 || status === 403) {
-          lock();
-        } else {
-          hint(err?.response?.data?.error || 'The connection dropped. Say it again when ready.');
-          ears.current?.holdForSpeech(false);
-          setOrbState(ears.current?.isOpen ? 'listening' : 'idle');
-        }
+        hint((err as Error)?.message || 'The connection dropped. Say it again when ready.');
+        ears.current?.holdForSpeech(false);
+        setState(ears.current?.isOpen ? 'listening' : 'idle');
       } finally {
         busy.current = false;
       }
@@ -260,10 +324,10 @@ export default function App() {
     if (phase !== 'ready') return;
 
     mouth.current = new Mouth(
-      () => setOrbState('speaking'),
+      () => setState('speaking'),
       () => {
         ears.current?.holdForSpeech(false);
-        setOrbState(ears.current?.isOpen ? 'listening' : 'idle');
+        setState(ears.current?.isOpen ? 'listening' : 'idle');
       },
       () => setPulse((p) => p + 1),
     );
@@ -279,7 +343,7 @@ export default function App() {
       onError: (code, fatal) => {
         if (fatal) {
           setMicOpen(false);
-          setOrbState('idle');
+          setState('idle');
           setMicNote('The browser blocked the microphone. Allow it for this site, then try again.');
           setTyping(true);
         } else if (code === 'audio-capture') {
@@ -294,6 +358,7 @@ export default function App() {
       ears.current = null;
       mouth.current = null;
     };
+    // The engine is built once per unlocked session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
@@ -304,7 +369,7 @@ export default function App() {
     }
     setMuted(false);
     setMicOpen(true);
-    setOrbState('listening');
+    setState('listening');
     hint("Go ahead — I'm listening.");
     ears.current?.setMuted(false);
     ears.current?.open();
@@ -315,12 +380,26 @@ export default function App() {
     setMuted(false);
     ears.current?.close();
     mouth.current?.stop();
-    setOrbState('idle');
+    setState('idle');
     hint(turns.length ? 'Line closed. Start again whenever.' : 'Tap the button and start talking.');
   };
 
+  const toggleMute = () => {
+    const next = !muted;
+    setMuted(next);
+    ears.current?.setMuted(next);
+  };
+
+  const submitDraft = (e: React.FormEvent) => {
+    e.preventDefault();
+    const v = draft.trim();
+    if (!v) return;
+    setDraft('');
+    void ask(v);
+  };
+
   const clearTranscript = async () => {
-    await base44.functions.invoke('voiceChat', { action: 'clear' }).catch(() => {});
+    await post('/api/transcript/clear').catch(() => {});
     setTurns([]);
   };
 
@@ -334,49 +413,65 @@ export default function App() {
     );
   }
 
-  if (phase === 'signin' || phase === 'locked') {
-    const needsSignIn = phase === 'signin';
+  if (phase === 'locked') {
     return (
       <div className="stage stage--centre">
         <div className="lock">
-          <FaceGlyph size={104} phase={needsSignIn ? 'idle' : scan} />
+          <FaceGlyph size={104} phase={scan} />
           <h1 className="lock__title">Talkback</h1>
           <p className="lock__sub">
-            {needsSignIn
-              ? 'Your private voice line. Sign in to continue.'
-              : enrolled
-                ? `Unlock with Face ID to open the line.`
-                : 'Set up Face ID on this device to open the line.'}
+            {claimed
+              ? 'Your private voice line. Unlock it with Face ID.'
+              : needsCode
+                ? 'Your private voice line. Enter the setup code, then claim it with Face ID.'
+                : 'Your private voice line. Set up Face ID to claim it — the first device to enrol keeps it.'}
           </p>
 
           <p className="lock__hint">
-            {authBusy && !needsSignIn
+            {authBusy
               ? 'Look at your device…'
               : scan === 'fail'
-                ? 'Not recognised'
-                : email && !needsSignIn
-                  ? email
-                  : ''}
+                ? 'Face not recognised'
+                : ''}
           </p>
 
-          {!support.ok && !needsSignIn && <p className="notice notice--bad">{support.reason}</p>}
+          {!support.ok && <p className="notice notice--bad">{support.reason}</p>}
           {authError && <p className="notice notice--bad">{authError}</p>}
 
-          {needsSignIn ? (
-            <button className="btn" type="button" onClick={signIn} disabled={authBusy}>
-              Sign In
+          {support.ok && !claimed && needsCode && (
+            <input
+              className="codefield"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="Setup code"
+              type="password"
+              autoComplete="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              disabled={authBusy}
+            />
+          )}
+
+          {support.ok && (
+            <button
+              className="btn"
+              onClick={claimed ? doSignIn : doEnrol}
+              disabled={authBusy || (!claimed && needsCode && !code.trim())}
+              type="button"
+            >
+              {claimed ? 'Unlock with Face ID' : 'Set Up Face ID'}
             </button>
-          ) : (
-            support.ok && (
-              <button className="btn" type="button" onClick={runFaceId} disabled={authBusy}>
-                {enrolled ? 'Unlock with Face ID' : 'Set Up Face ID'}
-              </button>
-            )
+          )}
+
+          {!claimed && !needsCode && (
+            <p className="notice notice--warn">
+              Not yet claimed. Set this up now — until you do, anyone with this link could claim it.
+            </p>
           )}
 
           <p className="fineprint">
-            Uses Face ID, Touch ID, Windows Hello or your Android screen lock. Your face is checked
-            by the device itself and never leaves it — this site only ever receives a public key.
+            Uses Face ID, Touch ID, Windows Hello or your Android screen lock. Your face is checked by
+            the device itself and never leaves it — this site only ever receives a public key.
           </p>
         </div>
       </div>
@@ -386,11 +481,11 @@ export default function App() {
   const stateLabel =
     muted && micOpen
       ? 'Muted'
-      : orbState === 'listening'
+      : state === 'listening'
         ? 'Listening'
-        : orbState === 'thinking'
+        : state === 'thinking'
           ? 'Thinking'
-          : orbState === 'speaking'
+          : state === 'speaking'
             ? 'Speaking'
             : 'Ready';
 
@@ -408,7 +503,7 @@ export default function App() {
             setUnread(0);
           }}
         >
-          <ScrollText size={17} />
+          <ScrollText size={16} />
           {unread > 0 && <span className="badge">{unread}</span>}
         </button>
         <button
@@ -417,13 +512,13 @@ export default function App() {
           aria-label="Settings"
           onClick={() => setSheet(sheet === 'settings' ? 'none' : 'settings')}
         >
-          <Settings size={17} />
+          <Settings size={16} />
         </button>
       </header>
 
       <main className="centre">
-        <Orb state={orbState} level={muted ? 0 : level} pulse={pulse} />
-        <p className="state" data-s={orbState} role="status" aria-live="polite">
+        <Orb state={state} level={muted ? 0 : level} pulse={pulse} />
+        <p className="state" data-s={state} role="status" aria-live="polite">
           {stateLabel}
         </p>
         <div className="caption">
@@ -433,16 +528,7 @@ export default function App() {
       </main>
 
       {typing && (
-        <form
-          className="typebar"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const v = draft.trim();
-            if (!v) return;
-            setDraft('');
-            void ask(v);
-          }}
-        >
+        <form className="typebar" onSubmit={submitDraft}>
           <input
             id="draft"
             value={draft}
@@ -460,14 +546,10 @@ export default function App() {
           type="button"
           aria-pressed={muted}
           aria-label={muted ? 'Unmute microphone' : 'Mute microphone'}
+          onClick={toggleMute}
           disabled={!micOpen}
-          onClick={() => {
-            const next = !muted;
-            setMuted(next);
-            ears.current?.setMuted(next);
-          }}
         >
-          {muted ? <MicOff size={22} /> : <Mic size={22} />}
+          {muted ? <MicOff size={20} /> : <Mic size={20} />}
         </button>
 
         <button
@@ -478,7 +560,7 @@ export default function App() {
           onClick={micOpen ? closeLine : openLine}
           disabled={!recognitionSupported && !micOpen}
         >
-          {micOpen ? <Square size={26} /> : <Mic size={28} />}
+          {micOpen ? <Square size={24} /> : <Mic size={26} />}
         </button>
 
         <button
@@ -488,11 +570,14 @@ export default function App() {
           aria-label="Type instead"
           onClick={() => setTyping(!typing)}
         >
-          <Keyboard size={22} />
+          <Keyboard size={20} />
         </button>
       </footer>
 
-      <div className={`scrim ${sheet !== 'none' ? 'open' : ''}`} onClick={() => setSheet('none')} />
+      <div
+        className={`scrim ${sheet !== 'none' ? 'open' : ''}`}
+        onClick={() => setSheet('none')}
+      />
 
       <aside className={`sheet ${sheet === 'script' ? 'open' : ''}`} aria-hidden={sheet !== 'script'}>
         <div className="sheet__grab" />
@@ -576,24 +661,22 @@ export default function App() {
           <p className="group__label">Security</p>
           <div className="group">
             <div className="row">
-              <span className="row__label">Signed in</span>
-              <span className="row__value">{email}</span>
-            </div>
-            <div className="row">
               <span className="row__label">Face ID</span>
-              <span className="row__value">{enrolled ? 'On' : 'Off'}</span>
+              <span className="row__value">On</span>
             </div>
             <button className="row btn--destructive" type="button" onClick={lock}>
-              <span className="row__label">Lock</span>
+              <span className="row__label">Lock this device</span>
             </button>
           </div>
           <p className="group__footnote">
-            Locking closes the line and asks for Face ID again. Your passkey stays enrolled.
+            Locking signs this browser out. The passkey stays enrolled, so Face ID will let you
+            straight back in.
           </p>
 
           <p className="group__footnote">
             Speech recognition in Chrome is cloud-based, so what you say leaves the device to be
-            transcribed. The transcript is stored against your account and is readable only by you.
+            transcribed. The transcript is stored on this app's server and is only readable while
+            signed in.
           </p>
         </div>
       </aside>

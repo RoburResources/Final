@@ -7,59 +7,65 @@
  * Claude speaks so the synthesiser is never transcribed as input.
  */
 
+type Listener = {
+  onInterim: (text: string) => void;
+  onFinal: (text: string) => void;
+  onError: (code: string, fatal: boolean) => void;
+  onOpen: () => void;
+};
+
 // Typed loosely on purpose: SpeechRecognition is not in every TS DOM lib.
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
 export const recognitionSupported = Boolean(SR);
 
 export class Ears {
-  constructor(listener) {
-    this.l = listener;
-    this.rec = null;
-    this.running = false;
-    this.want = false;
-    this.muted = false;
-    this.lang = 'en-AU';
-    this.blockedBySpeech = false;
-  }
+  private rec: any = null;
+  private running = false;
+  private want = false;
+  private muted = false;
+  private lang = 'en-AU';
+  private blockedBySpeech = false;
 
-  setLang(lang) {
+  constructor(private readonly l: Listener) {}
+
+  setLang(lang: string) {
     this.lang = lang;
     if (this.rec) {
-      this.stop_();
+      this.stop();
       this.rec = null;
-      if (this.want) setTimeout(() => this.start_(), 200);
+      if (this.want) setTimeout(() => this.start(), 200);
     }
   }
 
-  setMuted(muted) {
+  setMuted(muted: boolean) {
     this.muted = muted;
-    if (muted) this.stop_();
-    else this.start_();
+    if (muted) this.stop();
+    else this.start();
   }
 
   /** Half duplex: hold the mic closed while we are talking. */
-  holdForSpeech(holding) {
+  holdForSpeech(holding: boolean) {
     this.blockedBySpeech = holding;
-    if (holding) this.stop_();
-    else if (this.want) this.start_();
+    if (holding) this.stop();
+    else if (this.want) this.start();
   }
 
   open() {
     this.want = true;
-    this.start_();
+    this.start();
   }
 
   close() {
     this.want = false;
-    this.stop_();
+    this.stop();
   }
 
   get isOpen() {
     return this.want;
   }
 
-  build() {
+  private build(): any {
     if (!SR) return null;
     const r = new SR();
     r.continuous = true;
@@ -71,7 +77,7 @@ export class Ears {
       this.l.onOpen();
     };
 
-    r.onresult = (ev) => {
+    r.onresult = (ev: any) => {
       if (this.muted) return;
       let interim = '';
       let final = '';
@@ -84,7 +90,7 @@ export class Ears {
       if (final.trim()) this.l.onFinal(final.trim());
     };
 
-    r.onerror = (ev) => {
+    r.onerror = (ev: any) => {
       const code = ev?.error || 'unknown';
       const fatal = code === 'not-allowed' || code === 'service-not-allowed';
       if (fatal) this.want = false;
@@ -94,13 +100,13 @@ export class Ears {
     r.onend = () => {
       this.running = false;
       // Chrome ends the stream by itself; reopen while the line is meant to be open.
-      if (this.want && !this.muted && !this.blockedBySpeech) setTimeout(() => this.start_(), 220);
+      if (this.want && !this.muted && !this.blockedBySpeech) setTimeout(() => this.start(), 220);
     };
 
     return r;
   }
 
-  start_() {
+  private start() {
     if (!SR || this.running || !this.want || this.muted || this.blockedBySpeech) return;
     if (!this.rec) this.rec = this.build();
     try {
@@ -111,7 +117,7 @@ export class Ears {
     }
   }
 
-  stop_() {
+  private stop() {
     if (this.rec && this.running) {
       try {
         this.rec.stop();
@@ -127,35 +133,36 @@ export class Ears {
 const synth = window.speechSynthesis || null;
 export const speechSupported = Boolean(synth);
 
-export function loadVoices() {
+export function loadVoices(): SpeechSynthesisVoice[] {
   if (!synth) return [];
   return synth.getVoices() || [];
 }
 
-export function onVoicesChanged(fn) {
+export function onVoicesChanged(fn: () => void): () => void {
   if (!synth) return () => {};
   synth.addEventListener('voiceschanged', fn);
   return () => synth.removeEventListener('voiceschanged', fn);
 }
 
 export class Mouth {
-  constructor(onStart, onIdle, onWord) {
-    this.onStart = onStart;
-    this.onIdle = onIdle;
-    this.onWord = onWord;
-    this.queue = [];
-    this.speaking = false;
-    this.voice = null;
-  }
+  private queue: string[] = [];
+  private speaking = false;
+  voice: SpeechSynthesisVoice | null = null;
 
-  say(text) {
+  constructor(
+    private readonly onStart: () => void,
+    private readonly onIdle: () => void,
+    private readonly onWord: () => void,
+  ) {}
+
+  say(text: string) {
     const clean = text.trim();
     if (!synth || !clean) return;
     this.queue.push(clean);
     this.drain();
   }
 
-  drain() {
+  private drain() {
     if (!synth || this.speaking) return;
     const next = this.queue.shift();
     if (next === undefined) {
@@ -205,10 +212,10 @@ export class Mouth {
 }
 
 /** Split off whole sentences so speech can start before the answer finishes. */
-export function takeSentences(buffer) {
+export function takeSentences(buffer: string): { spoken: string; rest: string } {
   const re = /[^.!?…]+[.!?…]+["')\]]*\s*/g;
   let last = 0;
-  let m;
+  let m: RegExpExecArray | null;
   while ((m = re.exec(buffer)) !== null) last = m.index + m[0].length;
   return last > 0
     ? { spoken: buffer.slice(0, last), rest: buffer.slice(last) }

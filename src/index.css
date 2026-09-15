@@ -1,7 +1,3 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
 /* ---------------------------------------------------------------------------
    iOS design language: system font stack, Apple's system colour roles,
    grouped inset lists, sheets with a grabber, and the platform's spring-ish
@@ -337,3 +333,13 @@ select{
 button:focus-visible,select:focus-visible,input:focus-visible{
   outline:3px solid var(--blue);outline-offset:2px;
 }
+
+/* --------------------------- setup code field ---------------------------- */
+
+.codefield{
+  width:100%;margin-top:18px;font-family:var(--sans);font-size:17px;
+  color:var(--label);background:var(--bg-elevated);border:0;
+  border-radius:var(--r-card);padding:14px 16px;text-align:center;
+  letter-spacing:.04em;
+}
+.codefield::placeholder{color:var(--label-2);letter-spacing:-.01em}

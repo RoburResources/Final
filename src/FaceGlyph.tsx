@@ -1,10 +1,15 @@
+type Props = {
+  size?: number;
+  /** 'idle' waits, 'scanning' sweeps, 'ok' settles, 'fail' shakes. */
+  phase?: 'idle' | 'scanning' | 'ok' | 'fail';
+};
 
 /**
  * Biometric unlock glyph: corner brackets around a face, the convention every
  * platform uses for a face scan. Drawn here rather than borrowed so it carries
  * our own accent colour and animation.
  */
-export default function FaceGlyph({ size = 96, phase = 'idle' }) {
+export default function FaceGlyph({ size = 96, phase = 'idle' }: Props) {
   return (
     <div className={`faceglyph faceglyph--${phase}`} style={{ width: size, height: size }}>
       <svg viewBox="0 0 100 100" width={size} height={size} aria-hidden="true">

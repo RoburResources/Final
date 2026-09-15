@@ -1,103 +1,140 @@
 # Talkback
 
-A private live voice line to Claude, on Base44. Speak, hear the reply, and keep
-the transcript behind Face ID.
-
-## Why Base44
-
-This started as a Claude artifact, which could not be a private usable system:
-it lives inside the claude.ai viewer, is organisation-internal, has no domain of
-its own, and — being a cross-origin frame — depends on the embedder for both
-microphone and WebAuthn permission. Base44 solves all of it at once: a public
-`.base44.app` URL on a first-party origin, real auth, server-side functions, and
-`InvokeLLM` with no API key to manage.
-
-## How it is put together
+A private live voice line to Claude. You speak; it answers out loud. It runs on
+its own URL, behind a Face ID login, and the transcript stays on the server.
 
 ```
-src/                       frontend (React + Vite, iOS design language)
-base44/entities/           VoicePasskey, VoiceChallenge, VoiceTurn
-base44/functions/faceid/   WebAuthn ceremony + verification
-base44/functions/voiceChat/ the brain, and the transcript
+browser                                  server (Node + Express)
+  Face ID / Touch ID ── passkey ───────►  WebAuthn verified in WebCrypto
+  microphone → speech recognition ─────►  /api/chat  ──► Claude (streamed)
+  speech synthesis ◄─── sentences ─────   SSE, sentence by sentence
+  transcript ◄─────────────────────────   store.json
 ```
 
-Two layers of identity, doing different jobs:
+## Why it is not a Claude artifact
 
-- **Base44 auth** answers *who is this* — the app is `requiresAuth: true`, so no
-  route is reachable signed out.
-- **Face ID** answers *is it really them, on this device, right now*. The line
-  refuses to open for an account with no passkey enrolled, so a stolen session
-  alone cannot talk to it.
+The first version of this was one, and an artifact can never be the private
+usable system that was wanted. It lives inside the claude.ai viewer, is
+organisation-internal, has no domain of its own, and — being a cross-origin
+frame — depends on the embedder for both microphone and WebAuthn permission.
+That last point is not a detail: `getUserMedia` in a cross-origin frame fails
+*before* the browser can even ask, unless the embedder delegates `microphone`.
+WebAuthn is the same, via `publickey-credentials-get`. On its own origin, all
+of that simply goes away.
 
-## Face ID, precisely
+## Run it on Replit
 
-WebAuthn with a platform authenticator and `userVerification: 'required'` — Face
-ID or Touch ID on Apple devices, Hello on Windows, the device biometric on
-Android. The biometric is checked by the operating system and never leaves the
-device. The server stores one public key per device and verifies a signature per
-unlock.
+1. **Create the Repl.** In Replit, choose *Create* → *Import from GitHub* and
+   point it at this repository and branch.
+2. **Add the key.** Open *Secrets* (the padlock) and add:
 
-`base44/functions/faceid/entry.ts` runs the whole ceremony server-side, with no
-library — Deno gives us WebCrypto:
+   | Secret | Value |
+   | --- | --- |
+   | `ANTHROPIC_API_KEY` | your key from console.anthropic.com |
+   | `TALKBACK_CLAIM_CODE` | any hard-to-guess string — see below |
 
-- challenges are server-issued, single-use and consumed on verify, so a captured
-  assertion cannot be replayed;
-- `clientDataJSON.type` and `.origin` are checked, and the origin must equal the
-  app's own origin rather than one the caller supplies;
-- `rpIdHash` must equal SHA-256 of the pinned RP ID;
-- UP must be set and **UV must be set** — that bit is what separates a real
-  biometric check from a tap;
-- ES256 is verified after the DER→raw conversion authenticators require; RS256
-  verified directly;
+3. **Press Run.** It installs, builds the UI and starts the server on one port.
+4. **Open the URL on your phone**, enter the setup code, and tap *Set Up Face
+   ID*. That enrols your phone and claims the app.
+5. **Deploy** when you want it to stay up without the editor open. The included
+   `.replit` targets a Reserved VM, which keeps a persistent disk — see
+   *Where state lives*.
+
+It is plain Node and Express with no platform SDK, so the same repository runs
+unchanged on Railway, Render, Fly, or your own laptop.
+
+### Locally
+
+```sh
+npm install
+npm run dev      # Vite on :5173, API on :3000, /api proxied across
+npm test         # 35 checks, no API key needed, no spend
+npm run serve    # build once and serve everything from :3000
+```
+
+## Face ID, honestly
+
+"Face ID" here is WebAuthn with a platform authenticator and
+`userVerification: 'required'`. On an iPhone or a Mac that is literally Face ID
+or Touch ID; on Windows it is Hello; on Android it is the device biometric.
+
+What matters is *where the biometric is checked*: **on the device, by the
+operating system**. No face data is transmitted, stored, or seen by this app.
+Enrolment sends one public key. Every later sign-in sends a signature verified
+against that key.
+
+`lib/webauthn.js` does the whole ceremony rather than trusting the client:
+
+- challenges are server-issued, single-use, and consumed on verify, so a
+  captured assertion cannot be replayed;
+- `clientDataJSON.type` and `.origin` must match the ceremony and the origin
+  pinned at enrolment;
+- `rpIdHash` in the authenticator data must equal SHA-256 of the pinned RP ID;
+- the UP flag must be set, and the **UV flag must be set** — that bit is what
+  distinguishes a real biometric check from a mere tap;
+- the signature is verified with WebCrypto: ES256 over ECDSA P-256, including
+  the DER→raw conversion authenticators require, or RS256;
 - the signature counter must advance, which catches a cloned authenticator.
 
-Passkeys are stored per Base44 user, so one person's device can never unlock
-another's line.
+Sessions are HMAC-signed tokens in an httpOnly cookie, so nothing
+security-relevant is reachable from JavaScript. They expire after 30 days.
 
-## Voice
+All of the above is covered by `test/webauthn.e2e.mjs`, which drives the real
+server with a synthetic authenticator built on WebCrypto — a genuine ceremony,
+DER signatures and all — and then tries to break in eleven ways.
 
-Speech in is the Web Speech API (Chrome, Edge, Safari; Firefox has none and gets
-a text field instead). Speech out is `SpeechSynthesis`, spoken sentence by
-sentence as the reply arrives rather than after the whole answer lands — that is
-the difference between a live line and a walkie-talkie. Half duplex by default:
-the microphone closes while Claude speaks so the synthesiser is never
-transcribed as input.
+### Who may claim it
 
-The orb is driven by real signal — microphone RMS off an `AnalyserNode` while
-listening, and `SpeechSynthesisUtterance` `onboundary` word events while
-speaking.
+The first passkey **claims** the app and pins its origin; after that,
+registration requires an existing valid session, so a public URL cannot be
+taken over once you have enrolled.
 
-## Local development
+On its own that is trust-on-first-use, and it is only safe if you enrol
+promptly. Setting `TALKBACK_CLAIM_CODE` closes the gap: claiming then also
+requires the code, so nobody who happens on the URL first can take it — and a
+host that wipes the disk cannot hand your app to a stranger. Set it. The lock
+screen asks for the code only while the app is unclaimed.
 
-```bash
-npm install
-base44 dev          # local backend + frontend
-npm run dev         # frontend only, against the hosted backend
-```
+## Where state lives
 
-`npm run build` works standalone; it warns about a missing `VITE_BASE44_APP_ID`
-until the repo is linked to a Base44 app.
+Everything is one JSON file, `data/store.json`: the enrolled credentials, the
+session-signing key, live challenges, and the transcript. Nothing is
+relational; swapping it for Postgres or SQLite is a small, contained change.
 
-## To publish
+Some hosts wipe the filesystem on redeploy or run several instances. If yours
+does, the passkey and transcript go with it. A few environment variables cover
+that, and one more picks the model:
 
-This repo needs to be connected to a Base44 app, then published from the
-dashboard (`base44 dashboard open`). It could not be done from the environment
-this was written in: every `*.base44.com` host is refused by that network's
-egress policy (403 on CONNECT), so the CLI cannot even reach the login endpoint.
+| Variable | What it does |
+| --- | --- |
+| `TALKBACK_DATA_DIR` | put the store on a mounted disk instead of beside the code |
+| `TALKBACK_HMAC_KEY` | keep the session key out of the store, so a wipe does not sign you out |
+| `TALKBACK_CLAIM_CODE` | stop a wiped store from being claimable by anyone but you |
+| `TALKBACK_MODEL` | override the model; defaults to Claude Opus 5 |
 
-## Traps worth keeping
+## Speaking, not writing
 
-- Consecutive same-role turns are read as ONE turn by most chat APIs, so a
-  leading instructions turn merges with the speaker's first message and the
-  model answers the instructions instead of the person. `voiceChat` keeps the
-  transcript in a clearly delimited block after an explicit end-of-instructions
-  marker.
-- `SVGElement` does not reflect the `hidden` IDL property — it is defined on
-  `HTMLElement`. `svg.hidden = true` sets a dead expando and `[hidden]` never
-  matches; use `setAttribute`/`removeAttribute`.
-- `functions.invoke()` returns the raw axios response — the JSON is on `.data`.
-- `auth.login()` does not exist. It is `loginWithProvider()` or
-  `loginViaEmailPassword()`.
-- `getUserMedia` in a cross-origin frame fails *before* the browser can ask the
-  user unless the embedder delegates `microphone`; WebAuthn likewise needs
-  `publickey-credentials-get`. Both are moot on a first-party origin.
+The system prompt asks for spoken English: short replies, no markdown, no
+bullets, numbers expanded so a synthesiser reads them properly, and a tolerance
+for speech recognition mangling the odd word.
+
+The reply is streamed and spoken sentence by sentence as it arrives rather than
+waiting for the whole thing, which is most of what makes it feel like a line
+rather than a form. The microphone is gated while Claude speaks, so it does not
+transcribe its own voice.
+
+## Traps found building this
+
+- `sample` and most chat APIs read consecutive same-role turns as **one** turn,
+  so a leading `user` instructions turn merges with the speaker's first message
+  and the model answers the instructions instead of the person. Here the brief
+  is a `system` prompt, which cannot merge — and the test asserts it.
+- `SVGElement` does not reflect the `hidden` IDL property; it is defined on
+  `HTMLElement`. `svg.hidden = true` sets a dead expando and the `[hidden]`
+  rule never matches. Use `setAttribute`/`removeAttribute`.
+- A side effect inside a `setState` updater runs twice under StrictMode.
+- WebCrypto signs ECDSA as raw `r||s`; authenticators send DER. Verification
+  has to convert, and a test that skips the conversion passes for the wrong
+  reason.
+- `output_config.effort` is on the beta message surface, not the stable one.
+  The server asks for low effort and quietly retries plainly if refused.

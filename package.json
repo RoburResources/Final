@@ -1,28 +1,33 @@
 {
   "name": "talkback",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
+  "description": "A private live voice line to Claude, behind a Face ID login.",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -k -n server,web -c blue,magenta \"node --watch server.js\" \"vite\"",
     "build": "vite build",
-    "lint": "eslint . --quiet",
-    "preview": "vite preview"
+    "start": "node server.js",
+    "serve": "npm run build && node server.js",
+    "test": "node test/webauthn.e2e.mjs && node test/chat.e2e.mjs"
   },
   "dependencies": {
-    "@base44/sdk": "^0.8.43",
-    "@base44/vite-plugin": "^1.0.30",
-    "lucide-react": "^0.475.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "@anthropic-ai/sdk": "^0.72.0",
+    "cookie-parser": "^1.4.7",
+    "express": "^4.21.2",
+    "lucide-react": "^0.456.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@types/react": "^18.2.66",
-    "@types/react-dom": "^18.2.22",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
-    "autoprefixer": "^10.4.20",
-    "postcss": "^8.5.3",
-    "tailwindcss": "^3.4.17",
-    "vite": "^6.1.0"
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
   }
 }
