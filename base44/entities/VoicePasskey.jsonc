@@ -1,0 +1,21 @@
+{
+  "name": "VoicePasskey",
+  "type": "object",
+  "description": "One enrolled biometric device. Holds only a public key — no biometric data ever reaches the server.",
+  "properties": {
+    "cred_id": { "type": "string", "description": "base64url credential id" },
+    "public_key": { "type": "string", "description": "base64url SPKI public key" },
+    "alg": { "type": "number", "description": "COSE algorithm: -7 ES256 or -257 RS256" },
+    "sign_count": { "type": "number", "default": 0 },
+    "origin": { "type": "string", "description": "Origin pinned at enrolment" },
+    "rp_id": { "type": "string" },
+    "label": { "type": "string" },
+    "last_used": { "type": "string", "format": "date-time" }
+  },
+  "required": ["cred_id", "public_key", "alg", "origin", "rp_id"],
+  "permissions": {
+    "public": { "read": false, "create": false, "update": false, "delete": false },
+    "user":   { "read": false, "create": false, "update": false, "delete": false },
+    "admin":  { "read": true,  "create": false, "update": false, "delete": true }
+  }
+}
