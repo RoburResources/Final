@@ -31,9 +31,11 @@ The dominant variable is (1). Everything else is either a quality lever on top o
 | Talkback v1 (claude.ai artifact) | Works only inside the claude.ai viewer; mic and WebAuthn blocked by the cross-origin frame; "relay" is an artifact-DB mailbox that Claude Code must poll. Published *shareable by link*. | `README.md` §"Why it is not a Claude artifact"; artifact `a769c050…` |
 | Talkback v2 (this repo, `Final`) | Node/Express + React. Face ID via WebAuthn, `/api/chat` streams Claude sentence by sentence, browser Web Speech for STT/TTS, half-duplex (mic closes while it speaks), `data/store.json`. Deployed on Replit at `devoted-firsthand-queryoptimizer.replit.app`, **locked and unanswering**: no `ANTHROPIC_API_KEY` set, no passkey enrolled. No hands. | `server.js`, `src/voice.ts`, session `014ZAK5o…` summary |
 | ElevenLabs agent "Talkback — live line to Claude" | `agent_7301m2krd6fnfyd93d6d750pk7mm`. Scribe realtime ASR, `turn_v3` turn-taking, `eleven_flash_v2` TTS, brain = `claude-sonnet-5` **hosted by ElevenLabs**, no tools, no memory, 10-minute cap, 0 calls made. | `agents_get` |
-| Prior hands attempt | ElevenLabs webhook tool `create_task` → Task Command Center on Railway (`/api/agent-tools/v1/create-task`, picks model + `full_build/quick_fix/research_only`). 14 calls. Repo not in the GitHub org; liveness unknown (egress blocked from this sandbox). | `agents_list_tools` |
+| Prior hands attempt | ElevenLabs webhook tool `create_task` → Task Command Center on Railway (`/api/agent-tools/v1/create-task`, picks model + `full_build/quick_fix/research_only`). 14 calls. Railway project "Task Command Center" runs `task-command-center` (production) plus `tcc-worker-private` and `tcc-verifier-private` (environment `tcc-connector-private`) and Postgres; every service has crash notifications (10, 11, 17 Aug; worker again 1 Sep). Repo not in the GitHub org. A prior executor, not a dependable one. | `agents_list_tools`; Railway mail 10 Aug–1 Sep |
 | Addison (`addison-executive`) | Governed executive kernel with a voice control plane already designed and partly built: command envelope, continuity store, approval binding (L3 voice / L4 on-screen), kill switch. Overall `NOT_READY`. A 28 Aug Codex lane locked a **zero-incremental-cost** voice policy (local STT/TTS on the Windows host, LAN only, no ElevenLabs/Retell/API billing) and has been blocked since on "Windows host offline" (Desktop Commander offline since 31 Aug per MIC-46). | `src/voice/*`, `control/constitution.json`, `control/voice-zero-cost-policy.json` (research branch) |
 | Money | Card 9242 failing took services down in Aug/Sep; cards 7066 and 7752 work; **Replit Pro restored 3 Sep**. Constitution: automatic spend AUD $0, any spend needs exact approval bound to an amount. | MIC-20, MIC-42, constitution `spending` |
+| Anthropic billing | **Claude Max 20x** active (A$340 paid 11 Sep, to 11 Oct 2026). The **API** organisation "Michael's Individual Org" ran out of usage credits on 15 Aug and access was turned off; the small one-time credit purchases were refunded on 30 Aug. So today: no API credit for a Messages-API brain; the Max plan is what pays for Claude Code sessions. | Anthropic receipts 6 Aug–11 Sep, "API access is turned off" 15 Aug |
+| ElevenLabs billing | Not visible from this mailbox; the workspace is owned by michael@robur.com.au. Plan and included minutes unknown. | `agents_list` access_info |
 | Register rule | Every session reads the Robur Work Register first, continues existing issues, never creates parallel pages. | MIC-38 |
 
 Two lanes were built in the last three weeks that contradict each other: the Addison lane says
@@ -84,6 +86,14 @@ Why each boundary sits where it does:
   can receive "actually, use the other repo" without restarting, and `resume` survives a restart.
 - **Web Speech is the fallback, not the product.** It stays behind a flag for when ElevenLabs is
   unreachable or unpaid; it is not the benchmark path.
+- **Subscription-only variant (decided by §6 Q1).** The brain as drawn is a Messages-API call and
+  needs API credits, which the account does not currently have. If the Max plan's included
+  programmatic credit covers Agent SDK use, the brain can instead be one long-lived Agent SDK
+  streaming session per line (Claude Code as the conversational brain, hands as its subagents or
+  sibling sessions) and the whole system runs on the subscription with no API key in the process.
+  Cost: higher first-token latency than a direct Messages call; to be measured in Phase 2 before
+  Phase 3 commits to it. Either way, `ANTHROPIC_API_KEY` must be absent from the hands' process
+  when the subscription lane is in use, or it silently overrides subscription auth.
 
 ### 2.1 The "raise the bar" loop (property 3)
 
@@ -240,13 +250,17 @@ Decisions (overridable by a sentence on the line):
 
 Questions (each changes the build; nothing else is being asked):
 
-- **Q1 Spend.** The constitution needs an exact ceiling. Proposal: ElevenLabs conversational
-  minutes up to **AUD 150/month** and Anthropic API usage up to **AUD 250/month**, both capped in
-  code. Also: if the Claude subscription includes the programmatic (Agent SDK / `claude -p`)
-  credit, the hands can run on it without an API key — verify on the account; it changes the
-  Anthropic number.
-- **Q2 Task Command Center.** Is `task-command-center-production-6542.up.railway.app` alive, and
-  does it already run Claude Code tasks? If yes, Phase 1 becomes an adapter to it.
+- **Q1 Spend.** Facts found: Max 20x is active; the API org has no credits (turned off 15 Aug,
+  top-ups refunded 30 Aug). The constitution needs an exact ceiling for whatever is metered.
+  Proposal: ElevenLabs conversational minutes up to **AUD 150/month**, and Anthropic API credits
+  up to **AUD 250/month** *only if* the subscription lane (§2, last bullet) is not available —
+  check at console.anthropic.com whether the Max plan shows included programmatic credit for
+  Agent SDK / `claude -p`; if it does, the Anthropic number is AUD 0 and the hands and brain run
+  on the subscription. Both caps are enforced in code.
+- **Q2 Task Command Center.** Resolved from Railway mail: it exists (web + private worker +
+  private verifier + Postgres) and has crashed repeatedly, most recently the worker on 1 Sep.
+  Phase 1 does not depend on it; its model/mode selection and worker/verifier split are reused as
+  ideas only. Remaining question: keep it running, or archive it once Phase 1 lands?
 - **Q3 Scope of the hands in v1.** Proposal: all RoburResources repos (branches and draft PRs
   only), Linear comments on existing issues, Zapier MCP read-only for mail/calendar/Xero. Anything
   outside that waits for an L3 packet.
